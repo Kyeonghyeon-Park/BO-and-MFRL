@@ -34,16 +34,16 @@ class ShouAndDiTaxiGridGame:
     # Initialize the demand / demand's row :  (time, origin, destination, fulfilled or not)
     def initialize_demand(self):
         total_demand = []
-        for i in range(int(self.number_of_agents/2)):
+        for i in range(int(self.number_of_agents/5)):
             total_demand.append([1, 3, 1, 0])
-        for j in range(int(self.number_of_agents/5)):
+        for j in range(int(self.number_of_agents/2)):
             total_demand.append([1, 0, 2, 0])
         self.demand = np.asarray(total_demand)
 
     # Initialize the fare structure (Origin-Destination)
     def initialize_fare(self):
         self.fare[3, 1] = 10
-        self.fare[0, 2] = 4.9
+        self.fare[0, 2] = 100
 
     # Initialize the travel time matrix (Origin-Destination) / at least 1
     def initialize_travel_time(self):
@@ -64,58 +64,32 @@ class ShouAndDiTaxiGridGame:
 
         return available_agent  # numpy.ndarray
 
-    # Get available actions from location
+    # Get available actions from location / action : (0 : go to grid #0, 1 : go to grid #1, ...)
     def get_available_action_from_location(self, agent_loc):
         if agent_loc == 0:
-            available_action_set = [0, 3, 4]
-        elif agent_loc == 1:
-            available_action_set = [0, 2, 3]
-        elif agent_loc == 2:
-            available_action_set = [0, 1, 4]
-        else:
             available_action_set = [0, 1, 2]
+        elif agent_loc == 1:
+            available_action_set = [0, 1, 3]
+        elif agent_loc == 2:
+            available_action_set = [0, 2, 3]
+        else:
+            available_action_set = [1, 2, 3]
 
         return np.asarray(available_action_set, int)  # numpy.ndarray
 
-    # Get available actions for each agent / action : (0 : stay, 1 : up, 2 : left, 3 : down, 4 : right)
+    # Get available actions for each agent /
     def get_available_action(self, agent_id):
         agent_loc = self.joint_observation[agent_id][0]
         return self.get_available_action_from_location(agent_loc)  # numpy.ndarray
 
     # individual agent에 대해 current observation과 action으로 move (before order matching)
     # 원래는 travel time 해서 해야하지만 time = 1이므로 이렇게 진행
+    # temp_observation은 action에 의한 movement (before demand)
     # noinspection PyMethodMayBeStatic
     def move_agent(self, observation, action):
-        if observation[0] == 0:
-            if action in [0, 1, 2]:
-                temp_observation = observation + np.array([0, 1])
-            elif action == 3:
-                temp_observation = observation + np.array([2, 1])
-            else:  # action == 4
-                temp_observation = observation + np.array([1, 1])
-        elif observation[0] == 1:
-            if action in [0, 1, 4]:
-                temp_observation = observation + np.array([0, 1])
-            elif action == 3:
-                temp_observation = observation + np.array([2, 1])
-            else:  # action == 2
-                temp_observation = observation + np.array([-1, 1])
-        elif observation[0] == 2:
-            if action in [0, 2, 3]:
-                temp_observation = observation + np.array([0, 1])
-            elif action == 1:
-                temp_observation = observation + np.array([-2, 1])
-            else:  # action == 4
-                temp_observation = observation + np.array([1, 1])
-        else:  # observation[0] == 3
-            if action in [0, 3, 4]:
-                temp_observation = observation + np.array([0, 1])
-            elif action == 1:
-                temp_observation = observation + np.array([-2, 1])
-            else:  # action == 2
-                temp_observation = observation + np.array([-1, 1])
+        temp_observation = [action, observation[1] + 1]
 
-        return temp_observation
+        return np.asarray(temp_observation)
 
     # available agent와 그것들의 joint action으로 move (before order matching)
     def move_available_agent(self, available_agent, joint_action):
@@ -194,25 +168,49 @@ class ShouAndDiTaxiGridGame:
         order_matching = self.match_agent_and_demand(available_agent, temp_joint_observation)
         DS_ratio = self.get_demand_to_supply_ratio(temp_joint_observation)
         SC_ratio = self.get_service_charge_ratio(designer_alpha, DS_ratio)
+        # print(SC_ratio[1])
+        current_joint_observation = copy.deepcopy(self.joint_observation)
+        next_joint_observation = copy.deepcopy(self.joint_observation)
+        overall_joint_action = []
+        overall_joint_reward = []
+        overall_joint_mean_action = []
 
-        for agent in range(available_agent.shape[0]):
-            agent_id = available_agent[agent]
-            current_observation = copy.deepcopy(self.joint_observation[agent_id])
-            action = joint_action[agent]
-            temp_observation = temp_joint_observation[agent]
-            if len(order_matching) != 0 and agent_id in order_matching[:, 0]:
-                order_id = order_matching[order_matching[:, 0] == agent_id][0, 1]
-                order = self.demand[order_id]
-                next_observation = self.move_with_demand(temp_observation, order)
-                reward = self.fare[order[1], order[2]] * (1 - SC_ratio[temp_observation[0]])
-                overall_fare += np.array([self.fare[order[1], order[2]] * SC_ratio[temp_observation[0]],
-                                          self.fare[order[1], order[2]]])
+        idx = 0
+        for agent_id in range(self.number_of_agents):
+            if agent_id in available_agent:  # same as agent_id
+                action = joint_action[idx]
+                temp_observation = temp_joint_observation[idx]
+                if len(order_matching) != 0 and agent_id in order_matching[:, 0]:
+                    order_id = order_matching[order_matching[:, 0] == agent_id][0, 1]
+                    order = self.demand[order_id]
+                    next_observation = self.move_with_demand(temp_observation, order)
+                    fare = self.fare[order[1], order[2]]
+                    service_charge = SC_ratio[temp_observation[0]]
+                    reward = fare * (1 - service_charge)
+                    # print
+                    # if not isinstance(service_charge, float):
+                    #     print(service_charge)
+                    overall_fare = overall_fare + np.array([fare * service_charge, fare])
+                else:
+                    next_observation = temp_observation
+                    reward = 0
+
+                mean_action = DS_ratio[temp_observation[0]]
+                self.joint_observation[agent_id] = next_observation
+                idx = idx + 1
+
             else:
-                next_observation = temp_observation
-                reward = 0
-            mean_action = DS_ratio[temp_observation[0]]
-            if train:
-                buffer.append([current_observation, action, reward, mean_action, next_observation])
-            self.joint_observation[available_agent[agent]] = next_observation
+                action = None
+                reward = None
+                mean_action = None
+
+            overall_joint_action.append(action)
+            overall_joint_reward.append(reward)
+            overall_joint_mean_action.append(mean_action)
+
+        if train:
+            buffer.append([current_joint_observation, overall_joint_action, overall_joint_reward,
+                           overall_joint_mean_action, next_joint_observation])
 
         return buffer, overall_fare
+

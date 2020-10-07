@@ -9,7 +9,7 @@ import numpy as np
 import copy
 import time
 
-from grid_world import ShouAndDiTaxiGridGame
+from grid_world_v2 import ShouAndDiTaxiGridGame
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -67,7 +67,7 @@ def init_weights(m):
 
 
 #%% Actor network와 critic network 생성 및 initialization
-actor_layer = [2, 32, 16, 8, 5]
+actor_layer = [2, 32, 16, 8, 4]
 critic_layer = [4, 64, 32, 16, 1]
 
 actor = Actor(actor_layer)
@@ -88,8 +88,8 @@ discount_factor = 1
 designer_alpha = 0.5
 epsilon = 0.5
 
-buffer = []  # initialize replay buffer B, [o_i, a_i, r_i, a_i_bar, next_o_i]
-K = 64
+buffer = []  # initialize replay buffer B, [o, a, r, a_bar, next_o]
+K = 4
 
 obj_weight = 3/5
 ORR_train = []  # indicator
@@ -108,13 +108,13 @@ def get_action_dist(actor_network, observation):
     actor_input = torch.FloatTensor(observation).unsqueeze(0)
     action_prob = actor_network(actor_input)
     if observation[0] == 0:
-        available_action_torch = torch.tensor([1, 0, 0, 1, 1])
+        available_action_torch = torch.tensor([1, 1, 1, 0])
     elif observation[0] == 1:
-        available_action_torch = torch.tensor([1, 0, 1, 1, 0])
+        available_action_torch = torch.tensor([1, 1, 0, 1])
     elif observation[0] == 2:
-        available_action_torch = torch.tensor([1, 1, 0, 0, 1])
+        available_action_torch = torch.tensor([1, 0, 1, 1])
     else:
-        available_action_torch = torch.tensor([1, 1, 1, 0, 0])
+        available_action_torch = torch.tensor([0, 1, 1, 1])
     action_dist = distributions.Categorical(torch.mul(action_prob, available_action_torch))
 
     return action_dist
@@ -122,8 +122,8 @@ def get_action_dist(actor_network, observation):
 
 #%% Actor network와 critic network update # Q. 여기에 input으로 actor, critic 들어갔는데 내부에서 업데이트가 되는가?
 def train():
-    # dropout이나 batchnorm과 같이 traning과 evaluation이 다를 때 유용. 이 모델에선 쓸모 없음
     global buffer
+    # dropout이나 batchnorm과 같이 traning과 evaluation이 다를 때 유용. 이 모델에선 쓸모 없음
     # actor.train()
     # critic.train()
 
@@ -146,7 +146,7 @@ def train():
                 action_dist = get_action_dist(actor_target, world.joint_observation[agent_id])
                 action = action_dist.sample()
                 # 여기도 문제 생길 수도
-                joint_action.append(action.numpy())
+                joint_action.append(action.item())
 
         # step 후 replay buffer B에 (o_i, a_i, r_i, a_i_bar, o_i_prime) 추가
         if len(available_agent) != 0:
@@ -170,17 +170,26 @@ def train():
     obj_ftn_train.append(obj_weight * ORR_train[-1] + (1 - obj_weight) * (1 - OSC_train[-1]))
 
     # buffer에서 sample하여 update / 여기서부터 tensor 정의되어야 할 듯?
-    sample_id = np.random.choice(len(buffer), K, replace=True)
+    sample_id_list = np.random.choice(len(buffer), K, replace=True)
     actor_loss = torch.tensor([[0]])
     critic_loss = torch.tensor([[0]])
-    for i in sample_id:
-        sample = buffer[i]
-        actor_loss = actor_loss + calculate_actor_loss(sample)
-        critic_loss = critic_loss + calculate_critic_loss(sample)**2
 
-    actor_loss = actor_loss / K
-    critic_loss = critic_loss / K
+    update_count = 0
 
+    for sample_id in sample_id_list:
+        sample = buffer[sample_id]
+        for agent_id in range(world.number_of_agents):
+            if sample[1][agent_id] is not None:
+                actor_loss = actor_loss + calculate_actor_loss(sample, agent_id)
+                critic_loss = critic_loss + calculate_critic_loss(sample, agent_id) ** 2
+                update_count += 1
+            else:
+                continue
+
+    # sample 내에 available agent 수만큼 각각 loss 더하므로 K가 아님
+    actor_loss = actor_loss / update_count
+    critic_loss = critic_loss / update_count
+    #######################
     optimizerA.zero_grad()
     optimizerC.zero_grad()
     actor_loss.backward()
@@ -189,65 +198,95 @@ def train():
     optimizerC.step()
 
 
-def calculate_actor_loss(sample):
-    observation = sample[0]
-    action = sample[1]
-    local_demand = np.argwhere((world.demand[:, 0] == observation[1]) & (world.demand[:, 1] == observation[0]))[:, 0]
-    local_demand_num = local_demand.shape[0]
-    available_mean_action_set = local_demand_num / (np.arange(world.number_of_agents) + 1)
-    q_observation = 0
+#%% mean action sampling을 위한 part
+mean_action_sample_number = 5
 
-    for available_mean_action in available_mean_action_set:
-        critic_input = torch.FloatTensor([observation[0], observation[1], action, available_mean_action]).unsqueeze(0)
-        q_observation = q_observation + critic_target(critic_input) / world.number_of_agents
+
+def get_location_agent_number_and_prob(joint_observation, time):
+    agent_num = []
+    action_dist_set = []
+    for loc in range(4):
+        agent_num.append(np.sum((joint_observation[:, 0] == loc) & joint_observation[:, 1] == time))
+        action_dist = get_action_dist(actor_target, [loc, time])
+        action_dist_set.append(action_dist)
+
+    return agent_num, action_dist_set
+
+
+def get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set, mean_action_sample_number):
+    q_observation_action = 0
+
+    temp_observation = world.move_agent(observation, action)
+    temp_location = temp_observation[0]
+    temp_time = temp_observation[1]
+    local_demand = np.argwhere((world.demand[:, 0] == temp_time) & (world.demand[:, 1] == temp_location))[:, 0]
+    local_demand_num = local_demand.shape[0]
+
+    sample_number = mean_action_sample_number
+
+    for expectation_over_mean_action in range(sample_number):
+        loc_agent_num = 0
+        for loc in range(4):
+            num = agent_num[loc]
+            prob = action_dist_set[loc].probs[0][action].detach().numpy()
+            loc_agent_num = loc_agent_num + np.random.binomial(num, prob)
+        mean_action_sample = local_demand_num / (loc_agent_num + 1)
+
+        critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action_sample]).unsqueeze(0)
+
+        q_observation_action = q_observation_action + critic_target(critic_input) / sample_number
+
+    return q_observation_action
+
+
+#%% loss 계산
+def calculate_actor_loss(sample, agent_id):
+    observation = sample[0][agent_id]
+    action = sample[1][agent_id]
+    agent_num, action_dist_set = get_location_agent_number_and_prob(sample[0], observation[1])
+    q_observation = get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set, mean_action_sample_number)
 
     v_observation = 0
 
-    action_dist = get_action_dist(actor, observation)
     expected_action_dist = get_action_dist(actor_target, observation)
 
     available_action_set = world.get_available_action_from_location(observation[0])
     for expected_action in available_action_set:
-        expected_q = 0
-        for available_mean_action in available_mean_action_set:
-            critic_input = torch.FloatTensor([observation[0], observation[1], expected_action, available_mean_action]).unsqueeze(0)
-            expected_q = expected_q + critic_target(critic_input) / world.number_of_agents
+        expected_q = get_q_expectation_over_mean_action(observation, expected_action, agent_num, action_dist_set,
+                                                           mean_action_sample_number)
         v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
+
     q_observation = q_observation.detach()  # tensor를 tensor에 넣어서 생기는 문제 나올 예정
     v_observation = v_observation.detach()
     action = torch.tensor(action)
+
+    action_dist = get_action_dist(actor, observation)
     actor_loss = - (q_observation - v_observation) * action_dist.log_prob(action)
-    #############
+
     return actor_loss
 
 
-def calculate_critic_loss(sample):
-    observation = sample[0]
-    action = sample[1]
-    reward = sample[2]
-    mean_action = sample[3]
-    next_observation = sample[4]
+def calculate_critic_loss(sample, agent_id):
+    observation = sample[0][agent_id]
+    action = sample[1][agent_id]
+    reward = sample[2][agent_id]
+    mean_action = sample[3][agent_id]
+    next_observation = sample[4][agent_id]
     # o_i'에서의 available action
 
     if next_observation[1] != world.max_episode_time:
         available_action_set = world.get_available_action_from_location(next_observation[0])
 
         q_next_observation = []
-        for available_action in available_action_set:
-            q_next_observation_action = 0
-            temp_observation = world.move_agent(next_observation, available_action)
-            temp_location = temp_observation[0]
-            temp_time = temp_observation[1]
-            local_demand = np.argwhere((world.demand[:, 0] == temp_time) & (world.demand[:, 1] == temp_location))[:, 0]
-            local_demand_num = local_demand.shape[0]
-            available_mean_action_set = local_demand_num / (np.arange(world.number_of_agents) + 1)
-            # mean action에 대한 expectation 구하기 위함
-            for available_mean_action in available_mean_action_set:
-                critic_input = torch.FloatTensor([next_observation[0], next_observation[1], available_action, available_mean_action]).unsqueeze(0)
-                q_next_observation_action = q_next_observation_action + critic_target(critic_input) / world.number_of_agents
+        # next_joint_observation에서 각 location에 몇명씩 있는지
+        agent_num, action_dist_set = get_location_agent_number_and_prob(sample[4], next_observation[1])
 
+        # available action의 location으로 가려는 agent가 몇명이 되는지 sampling
+        for available_action in available_action_set:
+            q_next_observation_action = get_q_expectation_over_mean_action(next_observation, available_action,
+                                                                           agent_num, action_dist_set, mean_action_sample_number)
             q_next_observation.append(q_next_observation_action)
-        max_q_next_observation = torch.tensor(np.max(q_next_observation)).detach()
+        max_q_next_observation = (np.max(q_next_observation)).clone().detach()
     else:
         max_q_next_observation = 0
 
@@ -279,7 +318,7 @@ def evaluate():
             # action = torch.argmax(action_dist.probs, dim=-1)
             action = action_dist.sample()
             # 이 부분에서 runtime error 발생
-            joint_action.append(action.numpy())
+            joint_action.append(action.item())
         if len(available_agent) != 0:
             buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare, train=False)
         global_time += 1
@@ -294,6 +333,7 @@ def evaluate():
 
     # Overall service charge ratio
     if overall_fare[1] != 0:
+        # print(overall_fare)
         OSC_test.append(overall_fare[0] / overall_fare[1])
     else:
         OSC_test.append(0)
@@ -347,15 +387,42 @@ def draw_plt():
     plt.show()
 
 
+#%% print updated Q
+def print_updated_Q():
+    print("Q at (#1, 0)")
+    for action in range(4):
+        Q =[]
+        for mean_action in np.arange(0.1, 2.1, 0.1):
+            Q_value = critic(torch.FloatTensor([1, 0, action, mean_action]).unsqueeze(0))
+            Q.append(Q_value.item())
+        Q = np.array(Q)
+        np.set_printoptions(precision=2, linewidth=np.inf)
+        print(Q)
+    print("Q at (#2, 0)")
+    for action in range(4):
+        Q = []
+        for mean_action in np.arange(0.1, 2.1, 0.1):
+            Q_value = critic(torch.FloatTensor([2, 0, action, mean_action]).unsqueeze(0))
+            Q.append(Q_value.item())
+        Q = np.array(Q)
+        # np.set_printoptions(precision=2, linewidth=np.inf)
+        print(Q)
+
+
+
+
+
 #%%
 max_episode_number = 250
 episode = 0
 update_period = 10
+draw_period = 5
 
 for episode in range(max_episode_number):
 # while episode is not max_episode_number:
     train()
     with torch.no_grad():
+        print_updated_Q()
         evaluate()
 
     if (episode + 1) % update_period == 0:
@@ -364,6 +431,7 @@ for episode in range(max_episode_number):
         epsilon = np.max([epsilon - 0.05, 0.01])
         # LEARNING_RATE = np.max([LEARNING_RATE - 0.00005, 0.0001])
         LEARNING_RATE = 0.7 * LEARNING_RATE
+    if (episode + 1) % draw_period == 0:
         print(f"| Episode : {episode:4} | total time : {time.time() - start:5.2f} |")
         print(f"| train ORR : {ORR_train[episode]:5.2f} | train OSC : {OSC_train[episode]:5.2f} |"
               f" train Obj : {obj_ftn_train[episode]:5.2f} | train avg reward : {avg_reward_train[episode]:5.2f} |")
