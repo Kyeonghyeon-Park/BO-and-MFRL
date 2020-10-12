@@ -82,7 +82,7 @@ actor_target = copy.deepcopy(actor)
 critic_target = copy.deepcopy(critic)
 
 # %% parameter setting
-LEARNING_RATE = 0.0001
+LEARNING_RATE = 0.001
 optimizerA = optim.Adam(actor.parameters(), lr=LEARNING_RATE)
 optimizerC = optim.Adam(critic.parameters(), lr=LEARNING_RATE)
 discount_factor = 1
@@ -277,22 +277,23 @@ def get_q_expectation_over_mean_action(observation, action, agent_num, action_di
 def calculate_actor_loss(sample, agent_id):
     observation = sample[0][agent_id]
     action = sample[1][agent_id]
-    agent_num, action_dist_set = get_location_agent_number_and_prob(sample[0], observation[1])
-    q_observation = get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set,
-                                                       mean_action_sample_number)
+    with torch.no_grad():
+        agent_num, action_dist_set = get_location_agent_number_and_prob(sample[0], observation[1])
+        q_observation = get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set,
+                                                           mean_action_sample_number)
 
-    v_observation = 0
+        v_observation = 0
 
-    expected_action_dist = get_action_dist(actor_target, observation)
+        expected_action_dist = get_action_dist(actor_target, observation)
 
-    available_action_set = world.get_available_action_from_location(observation[0])
-    for expected_action in available_action_set:
-        expected_q = get_q_expectation_over_mean_action(observation, expected_action, agent_num, action_dist_set,
-                                                        mean_action_sample_number)
-        v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
+        available_action_set = world.get_available_action_from_location(observation[0])
+        for expected_action in available_action_set:
+            expected_q = get_q_expectation_over_mean_action(observation, expected_action, agent_num, action_dist_set,
+                                                            mean_action_sample_number)
+            v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
 
-    q_observation = q_observation.detach()  # tensor를 tensor에 넣어서 생기는 문제 나올 예정
-    v_observation = v_observation.detach()
+        # q_observation = q_observation.detach()
+        # v_observation = v_observation.detach()
     action = torch.tensor(action)
 
     action_dist = get_action_dist(actor, observation)
@@ -308,27 +309,29 @@ def calculate_critic_loss(sample, agent_id):
     mean_action = sample[3][agent_id]
     next_observation = sample[4][agent_id]
     # o_i'에서의 available action
+    with torch.no_grad():
+        if next_observation[1] != world.max_episode_time:
+            available_action_set = world.get_available_action_from_location(next_observation[0])
 
-    if next_observation[1] != world.max_episode_time:
-        available_action_set = world.get_available_action_from_location(next_observation[0])
+            q_next_observation = []
+            # next_joint_observation에서 각 location에 몇명씩 있는지
+            agent_num, action_dist_set = get_location_agent_number_and_prob(sample[4], next_observation[1])
 
-        q_next_observation = []
-        # next_joint_observation에서 각 location에 몇명씩 있는지
-        agent_num, action_dist_set = get_location_agent_number_and_prob(sample[4], next_observation[1])
+            # available action의 location으로 가려는 agent가 몇명이 되는지 sampling
+            for available_action in available_action_set:
+                q_next_observation_action = get_q_expectation_over_mean_action(next_observation, available_action,
+                                                                               agent_num, action_dist_set,
+                                                                               mean_action_sample_number)
+                q_next_observation.append(q_next_observation_action)
+            # max_q_next_observation = (np.max(q_next_observation)).clone().detach()
+            max_q_next_observation = np.max(q_next_observation)
+        else:
+            max_q_next_observation = 0
 
-        # available action의 location으로 가려는 agent가 몇명이 되는지 sampling
-        for available_action in available_action_set:
-            q_next_observation_action = get_q_expectation_over_mean_action(next_observation, available_action,
-                                                                           agent_num, action_dist_set,
-                                                                           mean_action_sample_number)
-            q_next_observation.append(q_next_observation_action)
-        max_q_next_observation = (np.max(q_next_observation)).clone().detach()
-    else:
-        max_q_next_observation = 0
-
-    critic_input = get_critic_input(observation, action, mean_action)
-    # critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action]).unsqueeze(0)
-    reward = torch.tensor(reward).detach()
+        critic_input = get_critic_input(observation, action, mean_action)
+        # critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action]).unsqueeze(0)
+    # reward = torch.tensor(reward).detach()
+    reward = torch.tensor(reward)
 
     # sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True) rather than torch.tensor(sourceTensor)
     critic_loss = reward + discount_factor * max_q_next_observation - critic(critic_input)

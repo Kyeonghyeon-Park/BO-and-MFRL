@@ -170,7 +170,7 @@ class ShouAndDiTaxiGridGame:
         SC_ratio = self.get_service_charge_ratio(designer_alpha, DS_ratio)
         # print(SC_ratio[1])
         current_joint_observation = copy.deepcopy(self.joint_observation)
-        next_joint_observation = copy.deepcopy(self.joint_observation)
+
         overall_joint_action = []
         overall_joint_reward = []
         overall_joint_mean_action = []
@@ -208,6 +208,7 @@ class ShouAndDiTaxiGridGame:
             overall_joint_reward.append(reward)
             overall_joint_mean_action.append(mean_action)
 
+        next_joint_observation = copy.deepcopy(self.joint_observation)
         if train:
             buffer.append([current_joint_observation, overall_joint_action, overall_joint_reward,
                            overall_joint_mean_action, next_joint_observation])
