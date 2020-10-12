@@ -34,16 +34,16 @@ class ShouAndDiTaxiGridGame:
     # Initialize the demand / demand's row :  (time, origin, destination, fulfilled or not)
     def initialize_demand(self):
         total_demand = []
-        for i in range(int(self.number_of_agents/5)):
+        for i in range(int(self.number_of_agents/2)):
             total_demand.append([1, 3, 1, 0])
-        for j in range(int(self.number_of_agents/2)):
+        for j in range(int(self.number_of_agents/5)):
             total_demand.append([1, 0, 2, 0])
         self.demand = np.asarray(total_demand)
 
     # Initialize the fare structure (Origin-Destination)
     def initialize_fare(self):
         self.fare[3, 1] = 10
-        self.fare[0, 2] = 100
+        self.fare[0, 2] = 4.9
 
     # Initialize the travel time matrix (Origin-Destination) / at least 1
     def initialize_travel_time(self):

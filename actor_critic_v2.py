@@ -13,13 +13,13 @@ from grid_world_v2 import ShouAndDiTaxiGridGame
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-#%% Game 생성
+# %% Game 생성
 world = ShouAndDiTaxiGridGame()
 np.random.seed(seed=1234)
 start = time.time()
 
 
-#%% Actor network와 critic network 정의
+# %% Actor network와 critic network 정의
 class Actor(nn.Module):
     def __init__(self, net_size):
         super().__init__()
@@ -60,16 +60,16 @@ class Critic(nn.Module):
         return x
 
 
-#%% initialization function
+# %% initialization function
 def init_weights(m):
     if type(m) == nn.Linear:
         torch.nn.init.xavier_normal_(m.weight)
         m.bias.data.fill_(0)
 
 
-#%% Actor network와 critic network 생성 및 initialization
-actor_layer = [5, 32, 16, 8, 4]
-critic_layer = [10, 64, 32, 16, 1]
+# %% Actor network와 critic network 생성 및 initialization
+actor_layer = [7, 32, 16, 8, 4]
+critic_layer = [12, 64, 32, 16, 1]
 
 actor = Actor(actor_layer)
 critic = Critic(critic_layer)
@@ -77,12 +77,12 @@ critic = Critic(critic_layer)
 actor.apply(init_weights)
 critic.apply(init_weights)
 
-#%% initial target network 생성 (나중에 10 episode마다 update)
+# %% initial target network 생성 (나중에 10 episode마다 update)
 actor_target = copy.deepcopy(actor)
 critic_target = copy.deepcopy(critic)
 
-#%% parameter setting
-LEARNING_RATE = 0.001
+# %% parameter setting
+LEARNING_RATE = 0.0001
 optimizerA = optim.Adam(actor.parameters(), lr=LEARNING_RATE)
 optimizerC = optim.Adam(critic.parameters(), lr=LEARNING_RATE)
 discount_factor = 1
@@ -92,7 +92,7 @@ epsilon = 0.5
 buffer = []  # initialize replay buffer B, [o, a, r, a_bar, next_o]
 K = 4
 
-obj_weight = 3/5
+obj_weight = 3 / 5
 ORR_train = []  # indicator
 OSC_train = []  # indicator
 avg_reward_train = []  # indicator
@@ -104,26 +104,36 @@ avg_reward_test = []  # indicator
 obj_ftn_test = []
 
 
-#%%
+# %%
 def get_actor_input(observation):
-    actor_input_numpy = np.zeros(5)
+    # [0, 1, 2, 3 : location / 4, 5, 6 : time]
+    actor_input_numpy = np.zeros(7)
     location = observation[0]
     current_time = observation[1]
     actor_input_numpy[location] = 1
-    actor_input_numpy[4] = current_time
+    if current_time > 2:
+        actor_input_numpy[6] = 1
+    else:
+        actor_input_numpy[4 + current_time] = 1
+    # actor_input_numpy[4] = current_time
     actor_input = torch.FloatTensor(actor_input_numpy).unsqueeze(0)
 
     return actor_input
 
 
 def get_critic_input(observation, action, mean_action):
-    critic_input_numpy = np.zeros(10)
+    # [0, 1, 2, 3 : location / 4, 5, 6 : time / 7, 8, 9, 10 : action / 11 : mean action]
+    critic_input_numpy = np.zeros(12)
     location = observation[0]
     current_time = observation[1]
     critic_input_numpy[location] = 1
+    if current_time > 2:
+        critic_input_numpy[6] = 1
+    else:
+        critic_input_numpy[4 + current_time] = 1
     critic_input_numpy[4] = current_time
-    critic_input_numpy[5 + action] = 1
-    critic_input_numpy[9] = mean_action
+    critic_input_numpy[7 + action] = 1
+    critic_input_numpy[11] = np.min([mean_action, 1])
     critic_input = torch.FloatTensor(critic_input_numpy).unsqueeze(0)
 
     return critic_input
@@ -146,7 +156,7 @@ def get_action_dist(actor_network, observation):
     return action_dist
 
 
-#%% Actor network와 critic network update # Q. 여기에 input으로 actor, critic 들어갔는데 내부에서 업데이트가 되는가?
+# %% Actor network와 critic network update # Q. 여기에 input으로 actor, critic 들어갔는데 내부에서 업데이트가 되는가?
 def train():
     global buffer
 
@@ -172,7 +182,8 @@ def train():
 
         # step 후 replay buffer B에 (o, a, r, a_bar, o_prime) 추가
         if len(available_agent) != 0:
-            buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare, train=True)
+            buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare,
+                                              train=True)
             buffer = buffer[-2000:]
         global_time += 1
 
@@ -220,7 +231,7 @@ def train():
     optimizerC.step()
 
 
-#%% mean action sampling을 위한 part
+# %% mean action sampling을 위한 part
 mean_action_sample_number = 5
 
 
@@ -262,12 +273,13 @@ def get_q_expectation_over_mean_action(observation, action, agent_num, action_di
     return q_observation_action
 
 
-#%% loss 계산
+# %% loss 계산
 def calculate_actor_loss(sample, agent_id):
     observation = sample[0][agent_id]
     action = sample[1][agent_id]
     agent_num, action_dist_set = get_location_agent_number_and_prob(sample[0], observation[1])
-    q_observation = get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set, mean_action_sample_number)
+    q_observation = get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set,
+                                                       mean_action_sample_number)
 
     v_observation = 0
 
@@ -276,7 +288,7 @@ def calculate_actor_loss(sample, agent_id):
     available_action_set = world.get_available_action_from_location(observation[0])
     for expected_action in available_action_set:
         expected_q = get_q_expectation_over_mean_action(observation, expected_action, agent_num, action_dist_set,
-                                                           mean_action_sample_number)
+                                                        mean_action_sample_number)
         v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
 
     q_observation = q_observation.detach()  # tensor를 tensor에 넣어서 생기는 문제 나올 예정
@@ -307,7 +319,8 @@ def calculate_critic_loss(sample, agent_id):
         # available action의 location으로 가려는 agent가 몇명이 되는지 sampling
         for available_action in available_action_set:
             q_next_observation_action = get_q_expectation_over_mean_action(next_observation, available_action,
-                                                                           agent_num, action_dist_set, mean_action_sample_number)
+                                                                           agent_num, action_dist_set,
+                                                                           mean_action_sample_number)
             q_next_observation.append(q_next_observation_action)
         max_q_next_observation = (np.max(q_next_observation)).clone().detach()
     else:
@@ -323,9 +336,8 @@ def calculate_critic_loss(sample, agent_id):
     return critic_loss
 
 
-#%% Trained actor network로 실제 case에 대해 실행
+# %% Trained actor network로 실제 case에 대해 실행
 def evaluate():
-
     global buffer
     world.initialize_game(random_grid=False)
     global_time = 0
@@ -343,7 +355,8 @@ def evaluate():
             # 이 부분에서 runtime error 발생
             joint_action.append(action.item())
         if len(available_agent) != 0:
-            buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare, train=False)
+            buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare,
+                                              train=False)
         global_time += 1
 
     # Order response rate / do not consider no demand case in the game
@@ -364,7 +377,7 @@ def evaluate():
     obj_ftn_test.append(obj_weight * ORR_test[-1] + (1 - obj_weight) * (1 - OSC_test[-1]))
 
 
-#%%
+# %%
 def draw_plt():
     plt.figure(figsize=(16, 14))
 
@@ -407,54 +420,41 @@ def draw_plt():
     plt.show()
 
 
-#%% print updated Q
+# %% print updated Q
 def print_updated_Q():
-    print("Q at (#1, 0)")
-    for action in range(4):
-        Q =[]
-        for mean_action in np.arange(0.1, 2.1, 0.1):
-            critic_input = get_critic_input([1, 0], action, mean_action)
-            Q_value = critic(critic_input)
-            # Q_value = critic(torch.FloatTensor([1, 0, action, mean_action]).unsqueeze(0))
-            Q.append(Q_value.item())
-        Q = np.array(Q)
-        np.set_printoptions(precision=2, linewidth=np.inf)
-        print(Q)
-    print("Q at (#2, 0)")
-    for action in range(4):
-        Q = []
-        for mean_action in np.arange(0.1, 2.1, 0.1):
-            critic_input = get_critic_input([2, 0], action, mean_action)
-            Q_value = critic(critic_input)
-            # Q_value = critic(torch.FloatTensor([2, 0, action, mean_action]).unsqueeze(0))
-            Q.append(Q_value.item())
-        Q = np.array(Q)
-        # np.set_printoptions(precision=2, linewidth=np.inf)
-        print(Q)
+    np.set_printoptions(precision=2, linewidth=np.inf)
+    for location in range(4):
+        for agent_time in range(3):
+            print("Q at (#", location, ", ", agent_time, ")")
+            for action in range(4):
+                Q = []
+                for mean_action in np.arange(0.1, 1.1, 0.1):
+                    critic_input = get_critic_input([location, agent_time], action, mean_action)
+                    Q_value = critic(critic_input)
+                    Q.append(Q_value.item())
+                Q = np.array(Q)
+                print(Q)
 
 
-
-
-
-#%%
-max_episode_number = 250
+# %%
+max_episode_number = 1000
 episode = 0
 update_period = 10
 draw_period = 5
 
 for episode in range(max_episode_number):
-# while episode is not max_episode_number:
+    # while episode is not max_episode_number:
     train()
     with torch.no_grad():
-        print_updated_Q()
         evaluate()
 
     if (episode + 1) % update_period == 0:
         actor_target = copy.deepcopy(actor)
         critic_target = copy.deepcopy(critic)
-        epsilon = np.max([epsilon - 0.05, 0.01])
+        epsilon = np.max([epsilon - 0.01, 0.01])
         # LEARNING_RATE = np.max([LEARNING_RATE - 0.00005, 0.0001])
-        LEARNING_RATE = 0.7 * LEARNING_RATE
+        # LEARNING_RATE = 0.7 * LEARNING_RATE
+        # decaying 적용 안되고 있었음
     if (episode + 1) % draw_period == 0:
         print(f"| Episode : {episode:4} | total time : {time.time() - start:5.2f} |")
         print(f"| train ORR : {ORR_train[episode]:5.2f} | train OSC : {OSC_train[episode]:5.2f} |"
@@ -462,4 +462,6 @@ for episode in range(max_episode_number):
         print(f"|  test ORR : {ORR_test[episode]:5.2f} |  test OSC : {OSC_test[episode]:5.2f} |"
               f"  test Obj : {obj_ftn_test[episode]:5.2f} |  test avg reward : {avg_reward_test[episode]:5.2f} |")
         draw_plt()
+        with torch.no_grad():
+            print_updated_Q()
 #
