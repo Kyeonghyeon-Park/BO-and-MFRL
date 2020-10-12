@@ -18,6 +18,7 @@ world = ShouAndDiTaxiGridGame()
 np.random.seed(seed=1234)
 start = time.time()
 
+
 #%% Actor network와 critic network 정의
 class Actor(nn.Module):
     def __init__(self, net_size):
@@ -67,8 +68,8 @@ def init_weights(m):
 
 
 #%% Actor network와 critic network 생성 및 initialization
-actor_layer = [2, 32, 16, 8, 4]
-critic_layer = [4, 64, 32, 16, 1]
+actor_layer = [5, 32, 16, 8, 4]
+critic_layer = [10, 64, 32, 16, 1]
 
 actor = Actor(actor_layer)
 critic = Critic(critic_layer)
@@ -104,8 +105,33 @@ obj_ftn_test = []
 
 
 #%%
+def get_actor_input(observation):
+    actor_input_numpy = np.zeros(5)
+    location = observation[0]
+    current_time = observation[1]
+    actor_input_numpy[location] = 1
+    actor_input_numpy[4] = current_time
+    actor_input = torch.FloatTensor(actor_input_numpy).unsqueeze(0)
+
+    return actor_input
+
+
+def get_critic_input(observation, action, mean_action):
+    critic_input_numpy = np.zeros(10)
+    location = observation[0]
+    current_time = observation[1]
+    critic_input_numpy[location] = 1
+    critic_input_numpy[4] = current_time
+    critic_input_numpy[5 + action] = 1
+    critic_input_numpy[9] = mean_action
+    critic_input = torch.FloatTensor(critic_input_numpy).unsqueeze(0)
+
+    return critic_input
+
+
 def get_action_dist(actor_network, observation):
-    actor_input = torch.FloatTensor(observation).unsqueeze(0)
+    actor_input = get_actor_input(observation)
+    # actor_input = torch.FloatTensor(observation).unsqueeze(0)
     action_prob = actor_network(actor_input)
     if observation[0] == 0:
         available_action_torch = torch.tensor([1, 1, 1, 0])
@@ -123,9 +149,6 @@ def get_action_dist(actor_network, observation):
 #%% Actor network와 critic network update # Q. 여기에 input으로 actor, critic 들어갔는데 내부에서 업데이트가 되는가?
 def train():
     global buffer
-    # dropout이나 batchnorm과 같이 traning과 evaluation이 다를 때 유용. 이 모델에선 쓸모 없음
-    # actor.train()
-    # critic.train()
 
     world.initialize_game(random_grid=True)
     global_time = 0
@@ -135,20 +158,19 @@ def train():
 
         available_agent = world.get_available_agent(global_time)
         exploration = np.random.rand(1)[0]
-        joint_action = []  # available agent들의 joint action임
+        joint_action = []  # available agents' joint action
         for agent_id in available_agent:
             available_action_set = world.get_available_action(agent_id)
             if exploration < epsilon:
                 random_action = np.random.choice(available_action_set)
-                joint_action.append(random_action)
+                joint_action.append(random_action.item())
             else:
-                # dim 2인 input을 받아서 unsqueeze 필요?
                 action_dist = get_action_dist(actor_target, world.joint_observation[agent_id])
+                # 이 부분에서 runtime error 발생 (특정 확률이 너무 작아지면)
                 action = action_dist.sample()
-                # 여기도 문제 생길 수도
                 joint_action.append(action.item())
 
-        # step 후 replay buffer B에 (o_i, a_i, r_i, a_i_bar, o_i_prime) 추가
+        # step 후 replay buffer B에 (o, a, r, a_bar, o_prime) 추가
         if len(available_agent) != 0:
             buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare, train=True)
             buffer = buffer[-2000:]
@@ -189,7 +211,7 @@ def train():
     # sample 내에 available agent 수만큼 각각 loss 더하므로 K가 아님
     actor_loss = actor_loss / update_count
     critic_loss = critic_loss / update_count
-    #######################
+
     optimizerA.zero_grad()
     optimizerC.zero_grad()
     actor_loss.backward()
@@ -232,7 +254,8 @@ def get_q_expectation_over_mean_action(observation, action, agent_num, action_di
             loc_agent_num = loc_agent_num + np.random.binomial(num, prob)
         mean_action_sample = local_demand_num / (loc_agent_num + 1)
 
-        critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action_sample]).unsqueeze(0)
+        critic_input = get_critic_input(observation, action, mean_action_sample)
+        # critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action_sample]).unsqueeze(0)
 
         q_observation_action = q_observation_action + critic_target(critic_input) / sample_number
 
@@ -290,12 +313,13 @@ def calculate_critic_loss(sample, agent_id):
     else:
         max_q_next_observation = 0
 
-    critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action]).unsqueeze(0)
+    critic_input = get_critic_input(observation, action, mean_action)
+    # critic_input = torch.FloatTensor([observation[0], observation[1], action, mean_action]).unsqueeze(0)
     reward = torch.tensor(reward).detach()
 
     # sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True) rather than torch.tensor(sourceTensor)
     critic_loss = reward + discount_factor * max_q_next_observation - critic(critic_input)
-
+    # print(critic_loss)
     return critic_loss
 
 
@@ -315,7 +339,6 @@ def evaluate():
             action_dist = get_action_dist(actor, world.joint_observation[agent_id])
             if global_time == 0 and agent_id in [0, len(available_agent) - 1]:
                 print(agent_id, action_dist.probs)
-            # action = torch.argmax(action_dist.probs, dim=-1)
             action = action_dist.sample()
             # 이 부분에서 runtime error 발생
             joint_action.append(action.item())
@@ -323,9 +346,6 @@ def evaluate():
             buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare, train=False)
         global_time += 1
 
-    # global ORR_test  # 굳이 할 필요는 없는듯. 여기서 실행하면.
-    # global OSC_test
-    # global avg_reward_test
     # Order response rate / do not consider no demand case in the game
     total_request = world.demand[:, 3].shape[0]
     fulfilled_request = np.sum(world.demand[:, 3])
@@ -393,7 +413,9 @@ def print_updated_Q():
     for action in range(4):
         Q =[]
         for mean_action in np.arange(0.1, 2.1, 0.1):
-            Q_value = critic(torch.FloatTensor([1, 0, action, mean_action]).unsqueeze(0))
+            critic_input = get_critic_input([1, 0], action, mean_action)
+            Q_value = critic(critic_input)
+            # Q_value = critic(torch.FloatTensor([1, 0, action, mean_action]).unsqueeze(0))
             Q.append(Q_value.item())
         Q = np.array(Q)
         np.set_printoptions(precision=2, linewidth=np.inf)
@@ -402,7 +424,9 @@ def print_updated_Q():
     for action in range(4):
         Q = []
         for mean_action in np.arange(0.1, 2.1, 0.1):
-            Q_value = critic(torch.FloatTensor([2, 0, action, mean_action]).unsqueeze(0))
+            critic_input = get_critic_input([2, 0], action, mean_action)
+            Q_value = critic(critic_input)
+            # Q_value = critic(torch.FloatTensor([2, 0, action, mean_action]).unsqueeze(0))
             Q.append(Q_value.item())
         Q = np.array(Q)
         # np.set_printoptions(precision=2, linewidth=np.inf)
