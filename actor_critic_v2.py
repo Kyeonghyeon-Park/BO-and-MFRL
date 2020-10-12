@@ -176,7 +176,7 @@ def train():
                 joint_action.append(random_action.item())
             else:
                 action_dist = get_action_dist(actor_target, world.joint_observation[agent_id])
-                # 이 부분에서 runtime error 발생 (특정 확률이 너무 작아지면)
+                # 이 부분에서 특정 확률이 너무 작아지면 runtime error 발생
                 action = action_dist.sample()
                 joint_action.append(action.item())
 
@@ -239,7 +239,7 @@ def get_location_agent_number_and_prob(joint_observation, time):
     agent_num = []
     action_dist_set = []
     for loc in range(4):
-        agent_num.append(np.sum((joint_observation[:, 0] == loc) & joint_observation[:, 1] == time))
+        agent_num.append(np.sum((joint_observation[:, 0] == loc) & (joint_observation[:, 1] == time)))
         action_dist = get_action_dist(actor_target, [loc, time])
         action_dist_set.append(action_dist)
 
@@ -454,7 +454,7 @@ for episode in range(max_episode_number):
     if (episode + 1) % update_period == 0:
         actor_target = copy.deepcopy(actor)
         critic_target = copy.deepcopy(critic)
-        epsilon = np.max([epsilon - 0.01, 0.01])
+        epsilon = np.max([epsilon - 0.05, 0.01])
         # LEARNING_RATE = np.max([LEARNING_RATE - 0.00005, 0.0001])
         # LEARNING_RATE = 0.7 * LEARNING_RATE
         # decaying 적용 안되고 있었음
