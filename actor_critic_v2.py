@@ -86,10 +86,11 @@ LEARNING_RATE = 0.001
 optimizerA = optim.Adam(actor.parameters(), lr=LEARNING_RATE)
 optimizerC = optim.Adam(critic.parameters(), lr=LEARNING_RATE)
 discount_factor = 1
-designer_alpha = 0.5
+designer_alpha = 1.5
 epsilon = 0.5
 
 buffer = []  # initialize replay buffer B, [o, a, r, a_bar, next_o]
+buffer_max_size = 50
 K = 4
 mean_action_sample_number = 5
 
@@ -146,7 +147,6 @@ def get_critic_input(observation, action, mean_action):
 # %% Define the action distribution generation function
 def get_action_dist(actor_network, observation):
     actor_input = get_actor_input(observation)
-    # actor_input = torch.FloatTensor(observation).unsqueeze(0)
     action_prob = actor_network(actor_input)
     if observation[0] == 0:
         available_action_torch = torch.tensor([1, 1, 1, 0])
@@ -182,17 +182,18 @@ def get_outcome(ORR_list, OSC_list, avg_reward_list, obj_ftn_list, demand, overa
 # %% Train (generate samples and update networks)
 def train():
     global buffer
-    world.initialize_game(random_grid=True)
+    world.initialize_game(random_grid=False)
     global_time = 0
     overall_fare = np.array([0, 0], 'float')
 
     while global_time is not world.max_episode_time:
 
         available_agent = world.get_available_agent(global_time)
-        exploration = np.random.rand(1)[0]
+
         joint_action = []  # available agents' joint action
         for agent_id in available_agent:
             available_action_set = world.get_available_action(agent_id)
+            exploration = np.random.rand(1)[0]
             if exploration < epsilon:
                 random_action = np.random.choice(available_action_set)
                 joint_action.append(random_action.item())
@@ -206,7 +207,7 @@ def train():
         if len(available_agent) != 0:
             buffer, overall_fare = world.step(available_agent, joint_action, designer_alpha, buffer, overall_fare,
                                               train=True)
-            buffer = buffer[-1000:]
+            buffer = buffer[-buffer_max_size:]
         global_time += 1
     # Get outcome of train episode
     get_outcome(ORR_train, OSC_train, avg_reward_train, obj_ftn_train, world.demand, overall_fare)
@@ -240,7 +241,7 @@ def train():
     optimizerC.step()
 
 
-# %% mean action sampling을 위한 part
+# %% Define the function for expectation over mean action using sampling
 def get_location_agent_number_and_prob(joint_observation, current_time):
     agent_num = []
     action_dist_set = []
@@ -278,7 +279,7 @@ def get_q_expectation_over_mean_action(observation, action, agent_num, action_di
     return q_observation_action
 
 
-# %% loss 계산
+# %% Define loss function for one sample and agent id
 def calculate_actor_loss(sample, agent_id):
     observation = sample[0][agent_id]
     action = sample[1][agent_id]
@@ -305,6 +306,42 @@ def calculate_actor_loss(sample, agent_id):
     return actor_loss
 
 
+def calculate_actor_loss_test(sample, agent_id):
+    observation = sample[0][agent_id]
+    action = sample[1][agent_id]
+    reward = sample[2][agent_id]
+    next_observation = sample[4][agent_id]
+    with torch.no_grad():
+        for i in ["observation", "next_observation"]:
+            if i == "observation":
+                obs = observation
+                joint_obs = sample[0]
+            else:
+                obs = next_observation
+                joint_obs = sample[4]
+            if obs[1] != world.max_episode_time:
+                v_obs = 0
+                agent_num, action_dist_set = get_location_agent_number_and_prob(joint_obs, obs[1])
+                expected_action_dist = get_action_dist(actor_target, obs)
+                available_action_set = world.get_available_action_from_location(obs[0])
+                for expected_action in available_action_set:
+                    expected_q = get_q_expectation_over_mean_action(obs, expected_action, agent_num, action_dist_set,
+                                                                    mean_action_sample_number)
+                    v_obs = v_obs + expected_action_dist.probs[0][expected_action] * expected_q
+            else:
+                v_obs = 0
+
+            if i == "observation":
+                v_observation = v_obs
+            else:
+                v_next_observation = v_obs
+
+    action = torch.tensor(action)
+    action_dist = get_action_dist(actor, observation)
+    actor_loss = - (reward + v_next_observation - v_observation) * action_dist.log_prob(action)
+    return actor_loss
+
+
 def calculate_critic_loss(sample, agent_id):
     observation = sample[0][agent_id]
     action = sample[1][agent_id]
@@ -316,7 +353,7 @@ def calculate_critic_loss(sample, agent_id):
             available_action_set = world.get_available_action_from_location(next_observation[0])
 
             q_next_observation = []
-            # next_joint_observation에서 각 location에 몇명씩 있는지
+            # get each location's agent numbers and action distributions from next_joint_observation
             agent_num, action_dist_set = get_location_agent_number_and_prob(sample[4], next_observation[1])
 
             # available action의 location으로 가려는 agent가 몇명이 되는지 sampling
@@ -329,11 +366,12 @@ def calculate_critic_loss(sample, agent_id):
             max_q_next_observation = np.max(q_next_observation)
         else:
             max_q_next_observation = 0
+        #### temporal test
+        max_q_next_observation = 0
 
         critic_input = get_critic_input(observation, action, mean_action)
     reward = torch.tensor(reward)
 
-    # sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True) rather than torch.tensor(sourceTensor)
     critic_loss = reward + discount_factor * max_q_next_observation - critic(critic_input)
 
     return critic_loss
@@ -442,14 +480,15 @@ for episode in range(max_episode_number):
 
     actor_network_save.append(actor)
     critic_network_save.append(critic)
-
+    if episode == 100:
+        print(100)
     with torch.no_grad():
         evaluate()
 
     if (episode + 1) % update_period == 0:
         actor_target = copy.deepcopy(actor)
         critic_target = copy.deepcopy(critic)
-        epsilon = np.max([epsilon - 0.025, 0.01])
+        # epsilon = np.max([epsilon - 0.025, 0.01])
         # LEARNING_RATE = np.max([LEARNING_RATE - 0.00005, 0.0001])
         # LEARNING_RATE = 0.7 * LEARNING_RATE
         # decaying 적용 안되고 있었음
