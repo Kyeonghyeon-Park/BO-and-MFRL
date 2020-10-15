@@ -1,3 +1,4 @@
+# %%
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,7 +11,6 @@ import copy
 import time
 
 from grid_world_v2 import ShouAndDiTaxiGridGame
-
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # %% Generate the game
@@ -82,11 +82,12 @@ actor_target = copy.deepcopy(actor)
 critic_target = copy.deepcopy(critic)
 
 # %% Parameter setting
-LEARNING_RATE = 0.001
-optimizerA = optim.Adam(actor.parameters(), lr=LEARNING_RATE)
-optimizerC = optim.Adam(critic.parameters(), lr=LEARNING_RATE)
+lr_actor = 0.0001
+lr_critic = 0.001
+optimizerA = optim.Adam(actor.parameters(), lr=lr_actor)
+optimizerC = optim.Adam(critic.parameters(), lr=lr_critic)
 discount_factor = 1
-designer_alpha = 1.5
+designer_alpha = 0.8
 epsilon = 0.5
 
 buffer = []  # initialize replay buffer B, [o, a, r, a_bar, next_o]
@@ -96,17 +97,10 @@ mean_action_sample_number = 5
 
 obj_weight = 3 / 5
 
-# outcome of train episode
-ORR_train = []
-OSC_train = []
-avg_reward_train = []
-obj_ftn_train = []
-
-# outcome of test episode
-ORR_test = []
-OSC_test = []
-avg_reward_test = []
-obj_ftn_test = []
+# outcome of episode
+outcome = {'train': {'ORR': [], 'OSC': [], 'avg_reward': [], 'obj_ftn': []},
+           'test': {'ORR': [], 'OSC': [], 'avg_reward': [], 'obj_ftn': []}
+           }
 
 
 # %% Define the actor and critic input generation(conversion) function
@@ -210,7 +204,11 @@ def train():
             buffer = buffer[-buffer_max_size:]
         global_time += 1
     # Get outcome of train episode
-    get_outcome(ORR_train, OSC_train, avg_reward_train, obj_ftn_train, world.demand, overall_fare)
+    get_outcome(outcome['train']['ORR'],
+                outcome['train']['OSC'],
+                outcome['train']['avg_reward'],
+                outcome['train']['obj_ftn'],
+                world.demand, overall_fare)
 
     # Update the network
     sample_id_list = np.random.choice(len(buffer), K, replace=True)
@@ -398,16 +396,19 @@ def evaluate():
                                               train=False)
         global_time += 1
 
-    # Get outcome of test episode
-    get_outcome(ORR_test, OSC_test, avg_reward_test, obj_ftn_test, world.demand, overall_fare)
+    get_outcome(outcome['test']['ORR'],
+                outcome['test']['OSC'],
+                outcome['test']['avg_reward'],
+                outcome['test']['obj_ftn'],
+                world.demand, overall_fare)
 
 
-# %% Define draw_plt print_updated_Q, print_action_distribution functions
-def draw_plt():
+# %% Define draw_plt print_updated_Q, print_action_distribution, print_information_per_N_episodes functions
+def draw_plt(outcome):
     plt.figure(figsize=(16, 14))
 
     plt.subplot(2, 2, 1)
-    plt.plot(avg_reward_train, label='Avg reward train')
+    plt.plot(outcome['train']['avg_reward'], label='Avg reward train')
     plt.ylim([0, 6])
     plt.xlabel('Episode', fontsize=20)
     plt.ylabel('Value', fontsize=20)
@@ -415,7 +416,7 @@ def draw_plt():
     plt.grid()
 
     plt.subplot(2, 2, 2)
-    plt.plot(avg_reward_test, label='Avg reward test')
+    plt.plot(outcome['test']['avg_reward'], label='Avg reward test')
     plt.ylim([0, 6])
     plt.xlabel('Episode', fontsize=20)
     plt.ylabel('Value', fontsize=20)
@@ -423,9 +424,9 @@ def draw_plt():
     plt.grid()
 
     plt.subplot(2, 2, 3)
-    plt.plot(ORR_train, label='ORR train')
-    plt.plot(OSC_train, label='OSC train')
-    plt.plot(obj_ftn_train, label='Obj train')
+    plt.plot(outcome['train']['ORR'], label='ORR train')
+    plt.plot(outcome['train']['OSC'], label='OSC train')
+    plt.plot(outcome['train']['obj_ftn'], label='Obj train')
     plt.ylim([0, 1.1])
     plt.xlabel('Episode', fontsize=20)
     plt.ylabel('Value', fontsize=20)
@@ -433,9 +434,9 @@ def draw_plt():
     plt.grid()
 
     plt.subplot(2, 2, 4)
-    plt.plot(ORR_test, label='ORR test')
-    plt.plot(OSC_test, label='OSC test')
-    plt.plot(obj_ftn_test, label='Obj test')
+    plt.plot(outcome['test']['ORR'], label='ORR test')
+    plt.plot(outcome['test']['OSC'], label='OSC test')
+    plt.plot(outcome['test']['obj_ftn'], label='Obj test')
     plt.ylim([0, 1.1])
     plt.xlabel('Episode', fontsize=20)
     plt.ylabel('Value', fontsize=20)
@@ -443,6 +444,16 @@ def draw_plt():
     plt.grid()
 
     plt.show()
+
+
+def print_information_per_N_episodes(outcome):
+    print("########################################################################################")
+    print(f"| Episode : {episode:4} | total time : {time.time() - start:5.2f} |")
+    print(f"| train ORR : {outcome['train']['ORR'][episode]:5.2f} | train OSC : {outcome['train']['OSC'][episode]:5.2f} |"
+          f" train Obj : {outcome['train']['obj_ftn'][episode]:5.2f} | train avg reward : {outcome['train']['avg_reward'][episode]:5.2f} |")
+    print(f"|  test ORR : {outcome['test']['ORR'][episode]:5.2f} |  test OSC : {outcome['test']['OSC'][episode]:5.2f} |"
+          f"  test Obj : {outcome['test']['obj_ftn'][episode]:5.2f} |  test avg reward : {outcome['test']['avg_reward'][episode]:5.2f} |")
+    print("########################################################################################")
 
 
 def print_updated_Q():
@@ -467,21 +478,33 @@ def print_action_distribution():
             print("Action distribution at (#", location, ", ", agent_time, ") : ", action_dist.probs[0].numpy())
 
 
+# %% Define save_model function
+def save_model():
+    torch.save({
+        'actor': actor.state_dict(),
+        'actor_layer': actor_layer,
+        'optimizerA': optimizerA.state_dict(),
+        'critic': critic.state_dict(),
+        'critic_layer': critic_layer,
+        'optimizerC': optimizerC.state_dict(),
+        'parameters': {'buffer_size': K,
+                       'alpha': designer_alpha,
+                       'max_episode_number': max_episode_number,
+                       'mean_action_sample_number': mean_action_sample_number,
+                       'discount_factor': discount_factor,
+                       'obj_weight': obj_weight},
+        'outcome': outcome,
+        'total_time': total_time
+    }, PATH + 'all.tar')
+
+
 # %% Run episode
-max_episode_number = 250
+max_episode_number = 2500
 episode = 0
 update_period = 10
-draw_period = 5
-actor_network_save = []
-critic_network_save = []
-for episode in range(max_episode_number):
-    # while episode is not max_episode_number:
-    train()
 
-    actor_network_save.append(actor)
-    critic_network_save.append(critic)
-    if episode == 100:
-        print(100)
+for episode in range(max_episode_number):
+    train()
     with torch.no_grad():
         evaluate()
 
@@ -489,17 +512,12 @@ for episode in range(max_episode_number):
         actor_target = copy.deepcopy(actor)
         critic_target = copy.deepcopy(critic)
         # epsilon = np.max([epsilon - 0.025, 0.01])
-        # LEARNING_RATE = np.max([LEARNING_RATE - 0.00005, 0.0001])
-        # LEARNING_RATE = 0.7 * LEARNING_RATE
-        # decaying 적용 안되고 있었음
-    if (episode + 1) % draw_period == 0:
-        print(f"| Episode : {episode:4} | total time : {time.time() - start:5.2f} |")
-        print(f"| train ORR : {ORR_train[episode]:5.2f} | train OSC : {OSC_train[episode]:5.2f} |"
-              f" train Obj : {obj_ftn_train[episode]:5.2f} | train avg reward : {avg_reward_train[episode]:5.2f} |")
-        print(f"|  test ORR : {ORR_test[episode]:5.2f} |  test OSC : {OSC_test[episode]:5.2f} |"
-              f"  test Obj : {obj_ftn_test[episode]:5.2f} |  test avg reward : {avg_reward_test[episode]:5.2f} |")
-        draw_plt()
         with torch.no_grad():
             print_updated_Q()
             print_action_distribution()
-#
+        print_information_per_N_episodes(outcome)
+        draw_plt(outcome)
+
+total_time = time.time() - start
+PATH = './weights/a_lr='+str(lr_actor)+'_alpha='+str(designer_alpha)+'/'
+save_model()
