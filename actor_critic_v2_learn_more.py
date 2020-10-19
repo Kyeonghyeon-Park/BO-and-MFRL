@@ -11,7 +11,6 @@ import copy
 import time
 
 from grid_world_v2 import ShouAndDiTaxiGridGame
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # %% Generate the game
 world = ShouAndDiTaxiGridGame()
@@ -67,41 +66,42 @@ def init_weights(m):
         m.bias.data.fill_(0)
 
 
-# %% Generate the actor network and critic network and do initialization
+# %% Load actor network, critic network and do initialization
 actor_layer = [7, 32, 16, 8, 4]
 critic_layer = [12, 64, 32, 16, 1]
 
 actor = Actor(actor_layer)
 critic = Critic(critic_layer)
+optimizerA = optim.Adam(actor.parameters())
+optimizerC = optim.Adam(critic.parameters())
 
-actor.apply(init_weights)
-critic.apply(init_weights)
+PATH = './weights/a_lr=0.0001_alpha=1/'
+data = torch.load(PATH + 'all.tar')
 
-# %% Generate the initial target network of actor and critic (update per 10 episodes)
+actor.load_state_dict(data['actor'])
+critic.load_state_dict(data['critic'])
+optimizerA.load_state_dict(data['optimizerA'])
+optimizerC.load_state_dict(data['optimizerC'])
+
+# %% Generate the target network of actor and critic (update per 10 episodes)
 actor_target = copy.deepcopy(actor)
 critic_target = copy.deepcopy(critic)
 
-# %% Parameter setting
-lr_actor = 0.0001
-lr_critic = 0.001
-optimizerA = optim.Adam(actor.parameters(), lr=lr_actor)
-optimizerC = optim.Adam(critic.parameters(), lr=lr_critic)
-discount_factor = 1
-designer_alpha = 0
+# %% Load the parameter setting
+discount_factor = data['parameters']['discount_factor']
+designer_alpha = data['parameters']['alpha']
 epsilon = 0.5
-
-buffer = []  # initialize replay buffer B, [o, a, r, a_bar, next_o]
+# epsilon = data['parameters']['epsilon']
+buffer = []
+# buffer = data['buffer']
 buffer_max_size = 50
-K = 4
-mean_action_sample_number = 5
-
-obj_weight = 3 / 5
-
-# outcome of episode
-outcome = {'train': {'ORR': [], 'OSC': [], 'avg_reward': [], 'obj_ftn': []},
-           'test': {'ORR': [], 'OSC': [], 'avg_reward': [], 'obj_ftn': []}
-           }
-
+# buffer_max_size = data['parameters']['buffer_max_size']
+K = data['parameters']['buffer_size']
+mean_action_sample_number = data['parameters']['mean_action_sample_number']
+obj_weight = data['parameters']['obj_weight']
+outcome = data['outcome']
+previous_episode_number = data['parameters']['max_episode_number']
+previous_learned_time = data['total_time']
 
 # %% Define the actor and critic input generation(conversion) function
 def get_actor_input(observation):
@@ -448,7 +448,7 @@ def draw_plt(outcome):
 
 def print_information_per_N_episodes(outcome):
     print("########################################################################################")
-    print(f"| Episode : {episode:4} | total time : {time.time() - start:5.2f} |")
+    print(f"| Episode : {episode:4} | total time : {previous_learned_time + time.time() - start:5.2f} |")
     print(f"| train ORR : {outcome['train']['ORR'][episode]:5.2f} | train OSC : {outcome['train']['OSC'][episode]:5.2f} |"
           f" train Obj : {outcome['train']['obj_ftn'][episode]:5.2f} | train avg reward : {outcome['train']['avg_reward'][episode]:5.2f} |")
     print(f"|  test ORR : {outcome['test']['ORR'][episode]:5.2f} |  test OSC : {outcome['test']['OSC'][episode]:5.2f} |"
@@ -479,7 +479,7 @@ def print_action_distribution():
 
 
 # %% Define save_model function
-def save_model():
+def save_more_learned_model():
     torch.save({
         'actor': actor.state_dict(),
         'actor_layer': actor_layer,
@@ -498,15 +498,16 @@ def save_model():
         'buffer': buffer,
         'outcome': outcome,
         'total_time': total_time
-    }, PATH + 'all.tar')
+    }, PATH + 'all_more_learned.tar')
 
 
 # %% Run episode
-max_episode_number = 2500
+current_episode_number = 1000
+max_episode_number = previous_episode_number + current_episode_number
 episode = 0
 update_period = 10
 
-for episode in range(max_episode_number):
+for episode in np.arange(previous_episode_number, max_episode_number):
     train()
     with torch.no_grad():
         evaluate()
@@ -521,6 +522,6 @@ for episode in range(max_episode_number):
         print_information_per_N_episodes(outcome)
         draw_plt(outcome)
 
-total_time = time.time() - start
-PATH = './weights/a_lr='+str(lr_actor)+'_alpha='+str(designer_alpha)+'/'
-save_model()
+total_time = previous_learned_time + time.time() - start
+
+save_more_learned_model()
