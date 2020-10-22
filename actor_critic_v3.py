@@ -63,7 +63,7 @@ def init_weights(m):
         m.bias.data.fill_(0)
 
 
-#%% Define the actor and critic input generation(conversion) function
+#%% Define the actor and critic input generation(conversion) function (categorical data)
 def get_actor_input(observation):
     # [0, 1, 2, 3 : location / 4, 5, 6 : time]
     actor_input_numpy = np.zeros(7)
@@ -74,7 +74,6 @@ def get_actor_input(observation):
         actor_input_numpy[6] = 1
     else:
         actor_input_numpy[4 + current_time] = 1
-    # actor_input_numpy[4] = current_time
     actor_input = torch.FloatTensor(actor_input_numpy).unsqueeze(0)
 
     return actor_input
@@ -98,7 +97,7 @@ def get_critic_input(observation, action, mean_action):
     return critic_input
 
 
-#%%
+#%% Define the action distribution generation function given actor network and observation (=pi_network(a_i|o_i))
 def get_action_dist(actor_network, observation):
     actor_input = get_actor_input(observation)
     action_prob = actor_network(actor_input)
@@ -115,6 +114,7 @@ def get_action_dist(actor_network, observation):
     return action_dist
 
 
+#%% draw the graph of outcome (avg reward, ORR, OSC, obj. of train and test)
 def draw_plt(outcome):
     plt.figure(figsize=(16, 14))
 
@@ -157,18 +157,39 @@ def draw_plt(outcome):
     plt.show()
 
 
+def draw_plt_avg(outcome, avg_length):
+    outcome_avg = {}
+    for i in outcome:
+        outcome_avg[i] = {}
+        for j in outcome[i]:
+            outcome_avg[i][j] = {}
+            measure_avg = []
+            for k in range(len(outcome[i][j])):
+                if k < avg_length - 1:
+                    measure_avg.append(np.average(outcome[i][j][:k + 1]))
+                else:
+                    measure_avg.append(np.average(outcome[i][j][k - avg_length + 1:k + 1]))
+            outcome_avg[i][j] = measure_avg
+    print(outcome_avg)
+    draw_plt(outcome_avg)
+
+
 #%% Define the main body
 class ActorCritic(object):
     def __init__(self, args):
+        # Generate the game
         self.world = ShouAndDiTaxiGridGame()
+
+        # Generate the actor network and critic network
         self.actor_layer = [7, 32, 16, 8, 4]
         self.critic_layer = [12, 64, 32, 16, 1]
-
         self.actor = Actor(self.actor_layer)
         self.critic = Critic(self.critic_layer)
+
+        # Define the parameters
         self.update_period = args.update_period
 
-        if not args.trained:
+        if not args.trained:  # if we don't use the trained model (to train more), initialize the parameters
             self.actor.apply(init_weights)
             self.critic.apply(init_weights)
             self.lr_actor = args.lr_actor
@@ -189,11 +210,6 @@ class ActorCritic(object):
             self.trained_episode_number = 0
             self.trained_time = 0
             self.max_episode_number = args.max_episode_number
-            #######
-            # parameter setting
-            # PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(self.designer_alpha) + '/'
-            ######
-
         else:
             data = torch.load(args.PATH + args.filename)
             self.actor.load_state_dict(data['actor'])
@@ -214,7 +230,7 @@ class ActorCritic(object):
             # self.buffer = data['buffer']
             self.buffer_max_size = 50
             # self.buffer_max_size = data['parameters']['buffer_max_size']
-            self.K = data['parameters']['buffer_size']  # it should be sample_size not naming error when saved
+            self.K = data['parameters']['buffer_size']  # it should be sample_size but naming error when saved
             self.mean_action_sample_number = data['parameters']['mean_action_sample_number']
             self.obj_weight = data['parameters']['obj_weight']
             self.outcome = data['outcome']
@@ -225,6 +241,7 @@ class ActorCritic(object):
         self.actor_target = copy.deepcopy(self.actor)
         self.critic_target = copy.deepcopy(self.critic)
 
+    # Define the outcome function (add the current result)
     def get_outcome(self, overall_fare, mode):
         # Order response rate / do not consider no demand case in the game
         total_request = self.world.demand[:, 3].shape[0]
@@ -242,7 +259,7 @@ class ActorCritic(object):
         self.outcome[mode]['obj_ftn'].append(self.obj_weight * self.outcome[mode]['ORR'][-1]
                                              + (1 - self.obj_weight) * (1 - self.outcome[mode]['OSC'][-1]))
 
-    # Define the function for expectation over mean action using sampling
+    # Define the function that returns locations' agents' number and action distribution
     def get_location_agent_number_and_prob(self, joint_observation, current_time):
         agent_num = []
         action_dist_set = []
@@ -253,6 +270,7 @@ class ActorCritic(object):
 
         return agent_num, action_dist_set
 
+    # Define the function for expectation over mean action using sampling
     def get_q_expectation_over_mean_action(self, observation, action, agent_num, action_dist_set):
         q_observation_action = 0
 
@@ -279,6 +297,7 @@ class ActorCritic(object):
 
         return q_observation_action
 
+    # Define the actor loss function for one sample and agent id
     def calculate_actor_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
@@ -303,6 +322,7 @@ class ActorCritic(object):
 
         return actor_loss
 
+    # Define the critic loss function for one sample and agent id
     def calculate_critic_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
@@ -335,6 +355,7 @@ class ActorCritic(object):
 
         return critic_loss
 
+    # Define the train function to train the actor network and the critic network
     def train(self):
         self.world.initialize_game(random_grid=False)
         global_time = 0
@@ -357,12 +378,13 @@ class ActorCritic(object):
                     action = action_dist.sample()
                     joint_action.append(action.item())
 
-            # step 후 replay buffer B에 (o, a, r, a_bar, o_prime) 추가
+            # step 후 replay buffer B에 (o, a, r, a_bar, o_prime) 추가 (train 시에만)
             if len(available_agent) != 0:
                 buffer, overall_fare = self.world.step(available_agent, joint_action, self.designer_alpha, self.buffer,
                                                        overall_fare, train=True)
                 self.buffer = buffer[-self.buffer_max_size:]
             global_time += 1
+
         # Get outcome of train episode
         self.get_outcome(overall_fare, mode='train')
 
@@ -394,6 +416,7 @@ class ActorCritic(object):
         self.optimizerA.step()
         self.optimizerC.step()
 
+    # Define the evaluate function to evaluate the trained actor network
     def evaluate(self):
         self.world.initialize_game(random_grid=False)
         global_time = 0
@@ -415,6 +438,7 @@ class ActorCritic(object):
 
         self.get_outcome(overall_fare, mode='test')
 
+    # Define the outcome visualization functions
     def print_updated_q(self):
         np.set_printoptions(precision=2, linewidth=np.inf)
         for location in range(4):
