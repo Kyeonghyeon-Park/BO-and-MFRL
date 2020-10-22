@@ -29,7 +29,7 @@ args = parser.parse_args()
 # args.max_episode_number = 3500
 #############
 # try other settings
-args.lr_actor = 0.0005
+# args.lr_actor = 0.0005
 #############
 model = ActorCritic(args)
 model.run()
