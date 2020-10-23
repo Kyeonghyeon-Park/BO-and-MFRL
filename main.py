@@ -1,5 +1,8 @@
 import argparse
+import numpy as np
+
 from actor_critic_v3 import ActorCritic
+
 
 designer_alpha = 0.8  # Bayesian optimization으로
 
@@ -24,12 +27,14 @@ args = parser.parse_args()
 #############
 # if want to learn trained network more, try to do this code
 # args.trained = True
-# args.PATH = './weights/a_lr=0.0001_alpha=1/'
+# args.PATH = './weights/a_lr=0.0001_alpha=0.7/'
 # args.filename = 'all.tar'
 # args.max_episode_number = 3500
 #############
 # try other settings
-# args.lr_actor = 0.0005
+args.designer_alpha = 0.3197
+args.lr_actor = 0.001
 #############
 model = ActorCritic(args)
 model.run()
+f_alpha = np.average(model.outcome['test']['obj_ftn'][-100:])

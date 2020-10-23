@@ -157,7 +157,7 @@ def draw_plt(outcome):
     plt.show()
 
 
-def draw_plt_avg(outcome, avg_length):
+def draw_plt_avg(outcome, moving_avg_length):
     outcome_avg = {}
     for i in outcome:
         outcome_avg[i] = {}
@@ -165,10 +165,10 @@ def draw_plt_avg(outcome, avg_length):
             outcome_avg[i][j] = {}
             measure_avg = []
             for k in range(len(outcome[i][j])):
-                if k < avg_length - 1:
+                if k < moving_avg_length - 1:
                     measure_avg.append(np.average(outcome[i][j][:k + 1]))
                 else:
-                    measure_avg.append(np.average(outcome[i][j][k - avg_length + 1:k + 1]))
+                    measure_avg.append(np.average(outcome[i][j][k - moving_avg_length + 1:k + 1]))
             outcome_avg[i][j] = measure_avg
     print(outcome_avg)
     draw_plt(outcome_avg)
@@ -518,5 +518,5 @@ class ActorCritic(object):
                 self.print_information_per_n_episodes(episode, start)
                 draw_plt(self.outcome)
         total_time = self.trained_time + time.time() - start
-        PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(self.designer_alpha) + '/'
+        PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(round(self.designer_alpha, 4)) + '/'
         self.save_model(total_time, PATH)
