@@ -32,9 +32,10 @@ args = parser.parse_args()
 # args.max_episode_number = 3500
 #############
 # try other settings
-args.designer_alpha = 0.3197
-args.lr_actor = 0.0003
+args.designer_alpha = 0.5
+# args.lr_actor = 0.0003
 #############
 model = ActorCritic(args)
 model.run()
 f_alpha = np.average(model.outcome['test']['obj_ftn'][-100:])
+print(f_alpha)

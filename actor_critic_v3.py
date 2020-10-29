@@ -485,7 +485,7 @@ class ActorCritic(object):
 
     def save_model(self, total_time, PATH, episode):
         if not os.path.isdir(PATH):
-            os.mkdir(PATH)
+            os.makedirs(PATH)
         filename = 'all_' + str(episode) + 'episode.tar'
         torch.save({
             'actor': self.actor.state_dict(),
