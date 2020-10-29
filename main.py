@@ -1,7 +1,7 @@
 import argparse
 import numpy as np
 
-from actor_critic_v3 import ActorCritic
+from actor_critic_v3 import *
 
 
 designer_alpha = 0.8  # Bayesian optimization으로
@@ -33,7 +33,7 @@ args = parser.parse_args()
 #############
 # try other settings
 args.designer_alpha = 0.3197
-args.lr_actor = 0.0005
+args.lr_actor = 0.0003
 #############
 model = ActorCritic(args)
 model.run()

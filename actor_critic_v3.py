@@ -173,7 +173,6 @@ def draw_plt_avg(outcome, moving_avg_length):
                 else:
                     measure_avg.append(np.average(outcome[i][j][k - moving_avg_length + 1:k + 1]))
             outcome_avg[i][j] = measure_avg
-    print(outcome_avg)
     draw_plt(outcome_avg)
 
 
