@@ -1,4 +1,4 @@
-#%%
+# %%
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,10 +12,12 @@ import time
 import os
 
 from grid_world_v2 import ShouAndDiTaxiGridGame
+
+
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-#%% Define the actor network and the critic network
+# %% Define the actor network and the critic network
 class Actor(nn.Module):
     def __init__(self, net_size):
         super().__init__()
@@ -56,14 +58,15 @@ class Critic(nn.Module):
         return x
 
 
-#%% Define the initialization function
+# %% Define the initialization function
 def init_weights(m):
     if type(m) == nn.Linear:
-        torch.nn.init.xavier_normal_(m.weight)
+        # torch.nn.init.xavier_normal_(m.weight)
+        torch.nn.init.kaiming_normal_(m.weight)
         m.bias.data.fill_(0)
 
 
-#%% Define the actor and critic input generation(conversion) function (categorical data)
+# %% Define the actor and critic input generation(conversion) function (categorical data)
 def get_actor_input(observation):
     # [0, 1, 2, 3 : location / 4, 5, 6 : time]
     actor_input_numpy = np.zeros(7)
@@ -97,7 +100,7 @@ def get_critic_input(observation, action, mean_action):
     return critic_input
 
 
-#%% Define the action distribution generation function given actor network and observation (=pi_network(a_i|o_i))
+# %% Define the action distribution generation function given actor network and observation (=pi_network(a_i|o_i))
 def get_action_dist(actor_network, observation):
     actor_input = get_actor_input(observation)
     action_prob = actor_network(actor_input)
@@ -114,7 +117,7 @@ def get_action_dist(actor_network, observation):
     return action_dist
 
 
-#%% draw the graph of outcome (avg reward, ORR, OSC, obj. of train and test)
+# %% draw the graph of outcome (avg reward, ORR, OSC, obj. of train and test)
 def draw_plt(outcome):
     plt.figure(figsize=(16, 14))
 
@@ -174,7 +177,7 @@ def draw_plt_avg(outcome, moving_avg_length):
     draw_plt(outcome_avg)
 
 
-#%% Define the main body
+# %% Define the main body
 class ActorCritic(object):
     def __init__(self, args):
         # Generate the game
@@ -289,7 +292,10 @@ class ActorCritic(object):
                 num = agent_num[loc]
                 prob = action_dist_set[loc].probs[0][action].detach().numpy()
                 loc_agent_num = loc_agent_num + np.random.binomial(num, prob)
-            mean_action_sample = local_demand_num / (loc_agent_num + 1)
+            try:
+                mean_action_sample = local_demand_num / loc_agent_num
+            except ZeroDivisionError:
+                mean_action_sample = 1
 
             critic_input = get_critic_input(observation, action, mean_action_sample)
 
@@ -318,8 +324,12 @@ class ActorCritic(object):
         action = torch.tensor(action)
 
         action_dist = get_action_dist(self.actor, observation)
+        ### original ###
         actor_loss = - (q_observation - v_observation) * action_dist.log_prob(action)
-
+        ### add ########
+        # reward = torch.tensor(sample[2][agent_id])
+        # actor_loss = - (reward - v_observation) * action_dist.log_prob(action)
+        ################
         return actor_loss
 
     # Define the critic loss function for one sample and agent id
@@ -474,10 +484,10 @@ class ActorCritic(object):
             f"|  test avg reward : {self.outcome['test']['avg_reward'][episode]:5.2f} |")
         print("########################################################################################")
 
-    def save_model(self, total_time, PATH):
+    def save_model(self, total_time, PATH, episode):
         if not os.path.isdir(PATH):
             os.mkdir(PATH)
-        filename = 'all_' + time.strftime('%y%m%d_%H%M', time.localtime(time.time())) + '.tar'
+        filename = 'all_' + str(episode) + 'episode_' + time.strftime('%y%m%d_%H%M', time.localtime(time.time())) + '.tar'
         torch.save({
             'actor': self.actor.state_dict(),
             'actor_layer': self.actor_layer,
@@ -517,6 +527,12 @@ class ActorCritic(object):
                     self.print_action_distribution()
                 self.print_information_per_n_episodes(episode, start)
                 draw_plt(self.outcome)
-        total_time = self.trained_time + time.time() - start
-        PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(round(self.designer_alpha, 4)) + '/'
-        self.save_model(total_time, PATH)
+
+            if (episode + 1) % 500 == 0:
+                total_time = self.trained_time + time.time() - start
+                PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(round(self.designer_alpha, 4)) + '/' \
+                       + time.strftime('%y%m%d_%H%M', time.localtime(time.time())) + '/'
+                self.save_model(total_time, PATH, episode)
+
+
+

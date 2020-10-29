@@ -33,7 +33,7 @@ args = parser.parse_args()
 #############
 # try other settings
 args.designer_alpha = 0.3197
-args.lr_actor = 0.001
+args.lr_actor = 0.0005
 #############
 model = ActorCritic(args)
 model.run()
