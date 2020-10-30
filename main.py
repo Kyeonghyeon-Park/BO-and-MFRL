@@ -33,8 +33,8 @@ args = parser.parse_args()
 #############
 # try other settings
 args.designer_alpha = 0.5
-# args.lr_actor = 0.0003
 #############
+torch.manual_seed(1238)
 model = ActorCritic(args)
 model.run()
 f_alpha = np.average(model.outcome['test']['obj_ftn'][-100:])

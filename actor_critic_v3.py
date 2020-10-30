@@ -358,7 +358,7 @@ class ActorCritic(object):
                 max_q_next_observation = 0
             # temporal test
             max_q_next_observation = 0
-            critic_input = get_critic_input(observation, action, mean_action)
+        critic_input = get_critic_input(observation, action, mean_action)
         reward = torch.tensor(reward)
         critic_loss = reward + self.discount_factor * max_q_next_observation - self.critic(critic_input)
 
@@ -530,7 +530,7 @@ class ActorCritic(object):
             if (episode + 1) % 500 == 0:
                 total_time = self.trained_time + time.time() - start
                 PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(round(self.designer_alpha, 4)) + '/' \
-                       + time.strftime('%y%m%d_%H%M', time.localtime(time.time())) + '/'
+                       + time.strftime('%y%m%d_%H%M', time.localtime(start)) + '/'
                 self.save_model(total_time, PATH, episode)
 
 
