@@ -32,7 +32,12 @@ args = parser.parse_args()
 # args.max_episode_number = 3500
 #############
 # try other settings
-args.designer_alpha = 0.5
+# args.trained = True
+# args.PATH = './weights/a_lr=0.0001_alpha=0.5/201031_1823/'
+# args.filename = 'all_3499episode.tar'
+args.max_episode_number = 5500
+args.designer_alpha = 0.3197
+args.lr_actor = 0.0001
 #############
 torch.manual_seed(1238)
 model = ActorCritic(args)
