@@ -335,7 +335,6 @@ class ActorCritic(object):
             v_observation = 0
 
             expected_action_dist = get_action_dist(self.actor_target, observation)
-
             available_action_set = self.world.get_available_action_from_location(observation[0])
             for expected_action in available_action_set:
                 expected_q = self.get_q_expectation_over_mean_action(observation, expected_action, agent_num,
