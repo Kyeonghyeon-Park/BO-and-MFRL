@@ -502,7 +502,7 @@ class ActorCritic(object):
                 print("Q at (#", location, ", ", agent_time, ")")
                 for action in range(4):
                     q = []
-                    for mean_action in np.arange(0.1, 1.1, 0.1):
+                    for mean_action in np.arange(0.0, 1.1, 0.1):
                         critic_input = get_critic_input([location, agent_time], action, mean_action)
                         q_value = self.critic(critic_input)
                         q.append(q_value.item())
