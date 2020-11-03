@@ -14,6 +14,7 @@ import os
 from grid_world_v2 import ShouAndDiTaxiGridGame
 
 
+
 # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -306,7 +307,7 @@ class ActorCritic(object):
         return q_observation_action
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss_old(self, sample, agent_id):
+    def calculate_actor_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
@@ -335,7 +336,7 @@ class ActorCritic(object):
         return actor_loss
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss(self, sample, agent_id):
+    def calculate_actor_loss_test(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
@@ -432,6 +433,8 @@ class ActorCritic(object):
 
         for sample_id in sample_id_list:
             sample = self.buffer[sample_id]
+            if sample[0][0][1] != 0:
+                continue
             for agent_id in range(self.world.number_of_agents):
                 if sample[1][agent_id] is not None:
                     actor_loss = actor_loss + self.calculate_actor_loss(sample, agent_id)
@@ -441,15 +444,16 @@ class ActorCritic(object):
                     continue
 
         # sample 내에 available agent 수만큼 각각 loss 더하므로 K가 아님
-        actor_loss = actor_loss / update_count
-        critic_loss = critic_loss / update_count
+        if update_count != 0:
+            actor_loss = actor_loss / update_count
+            critic_loss = critic_loss / update_count
 
-        self.optimizerA.zero_grad()
-        self.optimizerC.zero_grad()
-        actor_loss.backward()
-        critic_loss.backward()
-        self.optimizerA.step()
-        self.optimizerC.step()
+            self.optimizerA.zero_grad()
+            self.optimizerC.zero_grad()
+            actor_loss.backward()
+            critic_loss.backward()
+            self.optimizerA.step()
+            self.optimizerC.step()
 
     # Define the evaluate function to evaluate the trained actor network
     def evaluate(self):

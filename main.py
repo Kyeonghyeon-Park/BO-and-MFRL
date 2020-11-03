@@ -8,7 +8,7 @@ designer_alpha = 0.8  # Bayesian optimization으로
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--designer_alpha', default=designer_alpha)
-parser.add_argument('--sample_size', default=4)
+parser.add_argument('--sample_size', default=8)
 parser.add_argument('--buffer_max_size', default=50)
 parser.add_argument('--max_episode_number', default=3500)
 parser.add_argument('--discount_factor', default=1)
@@ -37,7 +37,7 @@ args = parser.parse_args()
 # args.filename = 'all_3499episode.tar'
 args.max_episode_number = 5500
 args.designer_alpha = 0.3197
-args.lr_actor = 0.0001
+args.lr_actor = 0.0002
 #############
 torch.manual_seed(1238)
 model = ActorCritic(args)
