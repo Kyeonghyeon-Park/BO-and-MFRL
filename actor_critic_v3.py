@@ -307,7 +307,7 @@ class ActorCritic(object):
         return q_observation_action
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss(self, sample, agent_id):
+    def calculate_actor_loss_old(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
@@ -336,7 +336,7 @@ class ActorCritic(object):
         return actor_loss
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss_test(self, sample, agent_id):
+    def calculate_actor_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
