@@ -202,6 +202,7 @@ class ActorCritic(object):
             self.discount_factor = args.discount_factor
             self.designer_alpha = args.designer_alpha
             self.epsilon = args.epsilon
+            self.epsilon_decay = args.epsilon_decay
             self.buffer = []
             self.buffer_max_size = args.buffer_max_size
             self.K = args.sample_size
@@ -217,23 +218,40 @@ class ActorCritic(object):
             data = torch.load(args.PATH + args.filename)
             self.actor.load_state_dict(data['actor'])
             self.critic.load_state_dict(data['critic'])
-            self.lr_actor = 0.0001
-            # self.lr_actor = data['parameters']['lr_actor']
-            self.lr_critic = 0.001
-            # self.lr_critic = data['parameters']['lr_critic']
+            try:
+                self.lr_actor = data['parameters']['lr_actor']
+            except:
+                self.lr_actor = 0.0001
+            try:
+                self.lr_critic = data['parameters']['lr_critic']
+            except:
+                self.lr_critic = 0.001
             self.optimizerA = optim.Adam(self.actor.parameters())
             self.optimizerA.load_state_dict(data['optimizerA'])
             self.optimizerC = optim.Adam(self.critic.parameters())
             self.optimizerC.load_state_dict(data['optimizerC'])
             self.discount_factor = data['parameters']['discount_factor']
             self.designer_alpha = data['parameters']['alpha']
-            self.epsilon = 0.5
-            # self.epsilon = data['parameters']['epsilon']
-            self.buffer = []
-            # self.buffer = data['buffer']
-            self.buffer_max_size = 50
-            # self.buffer_max_size = data['parameters']['buffer_max_size']
-            self.K = data['parameters']['buffer_size']  # it should be sample_size but naming error when saved
+            try:
+                self.epsilon = data['parameters']['epsilon']
+            except:
+                self.epsilon = 0.5
+            try:
+                self.epsilon_decay = data['parameters']['epsilon_decay']
+            except:
+                self.epsilon_decay = False
+            try:
+                self.buffer = data['buffer']
+            except:
+                self.buffer = []
+            try:
+                self.buffer_max_size = data['parameters']['buffer_max_size']
+            except:
+                self.buffer_max_size = 50
+            try:
+                self.K = data['parameters']['sample_size']
+            except:
+                self.K = data['parameters']['buffer_size']
             self.mean_action_sample_number = data['parameters']['mean_action_sample_number']
             self.obj_weight = data['parameters']['obj_weight']
             self.outcome = data['outcome']
@@ -307,7 +325,7 @@ class ActorCritic(object):
         return q_observation_action
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss_old(self, sample, agent_id):
+    def calculate_actor_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
@@ -336,7 +354,7 @@ class ActorCritic(object):
         return actor_loss
 
     # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss(self, sample, agent_id):
+    def calculate_actor_loss_test(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
@@ -524,13 +542,14 @@ class ActorCritic(object):
             'critic': self.critic.state_dict(),
             'critic_layer': self.critic_layer,
             'optimizerC': self.optimizerC.state_dict(),
-            'parameters': {'buffer_size': self.K,
+            'parameters': {'sample_size': self.K,
                            'buffer_max_size': self.buffer_max_size,
                            'alpha': self.designer_alpha,
                            'max_episode_number': self.max_episode_number,
                            'mean_action_sample_number': self.mean_action_sample_number,
                            'discount_factor': self.discount_factor,
                            'epsilon': self.epsilon,
+                           'epsilon_decay': self.epsilon_decay,
                            'obj_weight': self.obj_weight,
                            'lr_actor': self.lr_actor,
                            'lr_critic': self.lr_critic
@@ -557,8 +576,9 @@ class ActorCritic(object):
                 self.print_information_per_n_episodes(episode, start)
                 draw_plt(self.outcome)
 
-            if (episode + 1) % 50 == 0:
-                self.epsilon = max(self.epsilon - 0.01, 0.01)
+            if self.epsilon_decay:
+                if (episode + 1) % 50 == 0:
+                    self.epsilon = max(self.epsilon - 0.01, 0.01)
 
             if (episode + 1) % 500 == 0:
                 total_time = self.trained_time + time.time() - start
