@@ -197,6 +197,7 @@ class ActorCritic(object):
             self.critic.apply(init_weights)
             self.lr_actor = args.lr_actor
             self.lr_critic = args.lr_critic
+            self.actor_loss_type = args.actor_loss_type
             self.optimizerA = optim.Adam(self.actor.parameters(), lr=self.lr_actor)
             self.optimizerC = optim.Adam(self.critic.parameters(), lr=self.lr_critic)
             self.discount_factor = args.discount_factor
@@ -226,6 +227,10 @@ class ActorCritic(object):
                 self.lr_critic = data['parameters']['lr_critic']
             except:
                 self.lr_critic = 0.001
+            try:
+                self.actor_loss_type = data['parameters']['actor_loss_type']
+            except:
+                self.actor_loss_type = "avg"
             self.optimizerA = optim.Adam(self.actor.parameters())
             self.optimizerA.load_state_dict(data['optimizerA'])
             self.optimizerC = optim.Adam(self.critic.parameters())
@@ -324,54 +329,88 @@ class ActorCritic(object):
 
         return q_observation_action
 
+    # # Define the actor loss function for one sample and agent id
+    # def calculate_actor_loss(self, sample, agent_id):
+    #     observation = sample[0][agent_id]
+    #     action = sample[1][agent_id]
+    #     with torch.no_grad():
+    #         agent_num, action_dist_set = self.get_location_agent_number_and_prob(sample[0], observation[1])
+    #         q_observation = self.get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set)
+    #
+    #         v_observation = 0
+    #
+    #         expected_action_dist = get_action_dist(self.actor_target, observation)
+    #         available_action_set = self.world.get_available_action_from_location(observation[0])
+    #         for expected_action in available_action_set:
+    #             expected_q = self.get_q_expectation_over_mean_action(observation, expected_action, agent_num,
+    #                                                                  action_dist_set)
+    #             v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
+    #
+    #     action = torch.tensor(action)
+    #
+    #     action_dist = get_action_dist(self.actor, observation)
+    #     ### original ###
+    #     actor_loss = - (q_observation - v_observation) * action_dist.log_prob(action)
+    #     ### add ########
+    #     # reward = torch.tensor(sample[2][agent_id])
+    #     # actor_loss = - (reward - v_observation) * action_dist.log_prob(action)
+    #     ################
+    #     return actor_loss
+    #
+    # # Define the actor loss function for one sample and agent id
+    # def calculate_actor_loss_max(self, sample, agent_id):
+    #     observation = sample[0][agent_id]
+    #     action = sample[1][agent_id]
+    #     with torch.no_grad():
+    #         agent_num, action_dist_set = self.get_location_agent_number_and_prob(sample[0], observation[1])
+    #         q_observation = self.get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set)
+    #
+    #         v_observation = []
+    #
+    #         available_action_set = self.world.get_available_action_from_location(observation[0])
+    #         for expected_action in available_action_set:
+    #             expected_q = self.get_q_expectation_over_mean_action(observation, expected_action, agent_num,
+    #                                                                  action_dist_set)
+    #             v_observation.append(expected_q)
+    #
+    #         max_v_observation = max(v_observation)
+    #     action = torch.tensor(action)
+    #     action_dist = get_action_dist(self.actor, observation)
+    #     actor_loss = - (q_observation - max_v_observation) * action_dist.log_prob(action)
+    #
+    #     return actor_loss
+
     # Define the actor loss function for one sample and agent id
     def calculate_actor_loss(self, sample, agent_id):
         observation = sample[0][agent_id]
         action = sample[1][agent_id]
         with torch.no_grad():
             agent_num, action_dist_set = self.get_location_agent_number_and_prob(sample[0], observation[1])
-            q_observation = self.get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set)
-
-            v_observation = 0
-
-            expected_action_dist = get_action_dist(self.actor_target, observation)
             available_action_set = self.world.get_available_action_from_location(observation[0])
-            for expected_action in available_action_set:
-                expected_q = self.get_q_expectation_over_mean_action(observation, expected_action, agent_num,
-                                                                     action_dist_set)
-                v_observation = v_observation + expected_action_dist.probs[0][expected_action] * expected_q
+            q_observation_set = torch.zeros(4)
+            v_observation_avg = 0
+            target_action_dist = get_action_dist(self.actor_target, observation)
+            for available_action in available_action_set:
+                q_observation_set[available_action] = self.get_q_expectation_over_mean_action(observation,
+                                                                                              available_action,
+                                                                                              agent_num,
+                                                                                              action_dist_set)
+                v_observation_avg = v_observation_avg + target_action_dist.probs[0][available_action] \
+                                    * q_observation_set[available_action]
+
+            v_observation_max = max(q_observation_set)
 
         action = torch.tensor(action)
-
         action_dist = get_action_dist(self.actor, observation)
-        ### original ###
+        q_observation = q_observation_set[action]
+
+        if self.actor_loss_type == "avg":
+            v_observation = v_observation_avg
+        elif self.actor_loss_type == "max":
+            v_observation = v_observation_max
+        else:  # self.actor_loss_type == "mix"
+            v_observation = 1/2 * (v_observation_avg + v_observation_max)
         actor_loss = - (q_observation - v_observation) * action_dist.log_prob(action)
-        ### add ########
-        # reward = torch.tensor(sample[2][agent_id])
-        # actor_loss = - (reward - v_observation) * action_dist.log_prob(action)
-        ################
-        return actor_loss
-
-    # Define the actor loss function for one sample and agent id
-    def calculate_actor_loss_test(self, sample, agent_id):
-        observation = sample[0][agent_id]
-        action = sample[1][agent_id]
-        with torch.no_grad():
-            agent_num, action_dist_set = self.get_location_agent_number_and_prob(sample[0], observation[1])
-            q_observation = self.get_q_expectation_over_mean_action(observation, action, agent_num, action_dist_set)
-
-            v_observation = []
-
-            available_action_set = self.world.get_available_action_from_location(observation[0])
-            for expected_action in available_action_set:
-                expected_q = self.get_q_expectation_over_mean_action(observation, expected_action, agent_num,
-                                                                     action_dist_set)
-                v_observation.append(expected_q)
-
-            max_v_observation = max(v_observation)
-        action = torch.tensor(action)
-        action_dist = get_action_dist(self.actor, observation)
-        actor_loss = - (q_observation - max_v_observation) * action_dist.log_prob(action)
 
         return actor_loss
 
@@ -551,7 +590,8 @@ class ActorCritic(object):
                            'epsilon_decay': self.epsilon_decay,
                            'obj_weight': self.obj_weight,
                            'lr_actor': self.lr_actor,
-                           'lr_critic': self.lr_critic
+                           'lr_critic': self.lr_critic,
+                           'actor_loss_type': self.actor_loss_type
                            },
             'buffer': self.buffer,
             'outcome': self.outcome,
@@ -579,7 +619,7 @@ class ActorCritic(object):
                 if (episode + 1) % 50 == 0:
                     self.epsilon = max(self.epsilon - 0.01, 0.01)
 
-            if (episode + 1) % 500 == 0:
+            if (episode + 1) % 100 == 0:
                 total_time = self.trained_time + time.time() - start
                 PATH = './weights/a_lr=' + str(self.lr_actor) + '_alpha=' + str(round(self.designer_alpha, 4)) + '/' \
                        + time.strftime('%y%m%d_%H%M', time.localtime(start)) + '/'
